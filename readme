@@ -1,0 +1,107 @@
+# Product Finder
+
+Reverse-image product search pipeline that uses Google Lens (via SerpAPI) to
+pinpoint the exact SKU across Myntra, Slikk, and the brand’s own store using a
+single script, `product-finder.py`.
+
+## Highlights
+- **Visual-first matching**: every product starts with a pure image search to
+  avoid relying on potentially inconsistent titles.
+- **Multi-pass strategy**: automatically escalates to image + query searches
+  (brand, gender, category, color) when a site is still missing.
+- **Strict validation**: per-site URL rules, relaxed brand checks on brand
+  stores, and weighted title similarity with color bonuses/penalties keep
+  precision high.
+- **Single CSV in/out**: takes a lightweight input sheet and produces a
+  consolidated comparison report with URLs and prices per site.
+
+## Requirements
+- Python 3.9+
+- `pip install requests`
+- A valid [SerpAPI](https://serpapi.com/google-lens) key with Google Lens
+  access.
+
+## Quick Start
+1. Place your input CSV (see format below) in the project root.
+2. Edit `API_KEY`, `INPUT_FILE`, and `OUTPUT_FILE` at the bottom of
+   `product-finder.py` or pass them programmatically if you import the module.
+3. Run:
+   ```bash
+   python product-finder.py
+   ```
+4. Inspect the generated CSV (default `bd.csv`).
+
+## Input CSV Format
+The script expects UTF‑8 CSV with the following headers (order can vary):
+
+| Column            | Description                                              |
+|-------------------|----------------------------------------------------------|
+| `style_id`        | Internal reference ID                                    |
+| `brand`           | Brand name (used to pick the brand site automatically)   |
+| `product_title`   | Title/description from your catalog                      |
+| `gender`          | e.g., `Men`, `Women`, `Unisex`                           |
+| `category`        | High-level category (`T-shirts`, `Shirts`, etc.)         |
+| `min_price_rupees`| Your internal price                                      |
+| `first_image_url` | Publicly accessible image URL                            |
+
+## What the Script Produces
+The output CSV mirrors the input columns and adds:
+- `klydo_url`: Generated deep link back to your catalog.
+- `<site>_url` & `<site>_price`: one pair for each site in scope (Myntra,
+  Slikk, plus the detected brand site).
+- Summary coverage stats printed to the console (per-site hit rate and average
+  sites per product).
+
+## How the Search Pipeline Works
+1. **Site selection** – `get_allowed_sites()` auto-selects Myntra, Slikk, and a
+   brand storefront if it recognizes the brand (e.g., Bewakoof, Sassafras,
+   TIGC). Add entries to `SHOPPING_SITES` / `brand_mapping` to support new
+   brands.
+2. **Pass 1: Pure image search** – `search_image_on_serpapi()` sends the image
+   to Google Lens without a query for the most accurate visual matches.
+3. **Candidate filtering** – `extract_product_info()` keeps only matches that:
+   - belong to an allowed domain (detected via `identify_site()`),
+   - pass relaxed brand checks (marketplaces require brand hints in title/URL),
+   - satisfy strict URL rules so category/collection pages are rejected,
+   - clear similarity thresholds (5% marketplaces, 15% brand sites) with color
+     bonuses/penalties.
+4. **Pass 2: Image + query** – Only triggered for sites still missing after
+   Pass 1. Uses brand + gender + category (+ first detected color) to nudge
+   Lens toward the exact SKU.
+5. **Result selection** – Marketplaces prioritize the top visual rank; brand
+   stores balance similarity vs. rank to choose the safest URL.
+6. **Reporting** – Writes enriched rows to CSV and prints a coverage report
+   comparing each site’s hit rate against `COVERAGE_THRESHOLD` (default 50%).
+
+## Customization Tips
+- **SerpAPI key**: replace the `API_KEY` constant or load from an environment
+  variable.
+- **Different CSVs**: update `INPUT_FILE` / `OUTPUT_FILE` in `__main__` or call
+  `process_products()` yourself.
+- **More brands/sites**: extend the `SHOPPING_SITES` dictionary and
+  `brand_mapping`.
+- **Thresholds**: tweak `COVERAGE_THRESHOLD`, similarity percentages, or add
+  new heuristics inside `extract_product_info()`.
+- **Rate limiting**: the script sleeps one second between items; raise the delay
+  if you approach SerpAPI’s per-minute limits.
+
+## Troubleshooting
+- **“No API results”** – verify the image URL is publicly reachable and the
+  SerpAPI key is valid for Google Lens.
+- **False positives** – tighten `similarity_threshold` values or extend the URL
+  validation logic for the affected site.
+- **Missed brand site** – ensure the brand name in CSV matches a key or alias
+  in `brand_mapping`.
+
+## Need to Run It Headless?
+`process_products()` is importable; you can wrap it in another script or job
+runner:
+
+```python
+from product_finder import process_products
+process_products("input.csv", "output.csv")
+```
+
+This makes it easy to batch different brand sheets or hook the pipeline into an
+orchestrator/cron without modifying the main file each time.
+
